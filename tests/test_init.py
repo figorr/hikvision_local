@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import patch
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from custom_components.hikvision_next.const import DOMAIN
 from custom_components.hikvision_next.hikvision_device import HikvisionDevice
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -39,6 +40,50 @@ async def test_basic_init(hass: HomeAssistant, init_integration: MockConfigEntry
     device: HikvisionDevice = entry.runtime_data
     assert device.host == TEST_CONFIG["host"]
     assert init_integration.title in device.device_info.model
+
+
+@pytest.mark.parametrize("init_integration", ["DS-7608NXI-I2"], indirect=True)
+async def test_camera_devices_linked_to_nvr(hass: HomeAssistant, init_integration: MockConfigEntry) -> None:
+    """Test camera devices are linked to the NVR device."""
+
+    entry = init_integration
+    device: HikvisionDevice = entry.runtime_data
+    registry = dr.async_get(hass)
+
+    nvr_entry = next(
+        d for d in registry.devices.values() if (DOMAIN, device.device_info.serial_no) in d.identifiers
+    )
+
+    camera_entries = [
+        d
+        for d in registry.devices.values()
+        if d.id != nvr_entry.id and any(domain == DOMAIN for domain, _ in d.identifiers)
+    ]
+    assert camera_entries
+    for camera_entry in camera_entries:
+        assert camera_entry.via_device_id == nvr_entry.id
+
+
+@pytest.mark.parametrize("init_integration", ["DS-7608NXI-I2"], indirect=True)
+async def test_camera_device_info_via_device(
+    hass: HomeAssistant, init_integration: MockConfigEntry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test camera device info uses via_device_id on new HA and via_device on old HA."""
+
+    entry = init_integration
+    device: HikvisionDevice = entry.runtime_data
+    camera_id = device.cameras[0].id
+
+    monkeypatch.setattr("custom_components.hikvision_next.hikvision_device.SUPPORTS_VIA_DEVICE_ID", True)
+    device.nvr_device_id = "nvr-device-id"
+    device_info = device.hass_device_info(camera_id)
+    assert device_info["via_device_id"] == "nvr-device-id"
+    assert "via_device" not in device_info
+
+    monkeypatch.setattr("custom_components.hikvision_next.hikvision_device.SUPPORTS_VIA_DEVICE_ID", False)
+    device_info = device.hass_device_info(camera_id)
+    assert device_info["via_device"] == (DOMAIN, device.device_info.serial_no)
+    assert "via_device_id" not in device_info
 
 
 @pytest.mark.parametrize("init_integration", ["DS-7608NXI-I2"], indirect=True)

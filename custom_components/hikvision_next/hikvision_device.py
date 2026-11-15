@@ -35,6 +35,9 @@ from .isapi.const import EVENT_IO
 
 _LOGGER = logging.getLogger(__name__)
 
+# DeviceInfo["via_device_id"] replaced the deprecated via_device tuple in HA 2026.8
+SUPPORTS_VIA_DEVICE_ID = "via_device_id" in getattr(DeviceInfo, "__annotations__", {})
+
 
 class HikvisionDevice(ISAPIClient):
     """Hikvision device for Home Assistant integration."""
@@ -64,6 +67,7 @@ class HikvisionDevice(ISAPIClient):
         super().__init__(host, username, password, verify_ssl, rtsp_port_forced, session)
 
         self.events_info: list[EventInfo] = []
+        self.nvr_device_id: str | None = None
 
     async def init_coordinators(self):
         """Initialize coordinators."""
@@ -105,13 +109,20 @@ class HikvisionDevice(ISAPIClient):
             camera_info = self.get_camera_by_id(camera_id)
             is_ip_camera = isinstance(camera_info, IPCamera)
 
+            via_device_info = {}
+            if self.device_info.is_nvr:
+                if SUPPORTS_VIA_DEVICE_ID:
+                    via_device_info["via_device_id"] = self.nvr_device_id
+                else:
+                    via_device_info["via_device"] = (DOMAIN, self.device_info.serial_no)
+
             return DeviceInfo(
                 manufacturer=self.device_info.manufacturer,
                 identifiers={(DOMAIN, camera_info.serial_no)},
                 model=camera_info.model,
                 name=camera_info.name,
                 sw_version=camera_info.firmware if is_ip_camera else "Unknown",
-                via_device=(DOMAIN, self.device_info.serial_no) if self.device_info.is_nvr else None,
+                **via_device_info,
             )
 
     def get_device_event_capabilities(
